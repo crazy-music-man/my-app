@@ -333,7 +333,7 @@ function render() {
     th.appendChild(renderBubble(m));
   }
   for (const p of pendingMessages) {
-    th.appendChild(renderBubble({ side:"them", kind: p.kind, content: p.content, time: p.time }));
+    th.appendChild(renderBubble({ side:"them", kind: p.kind, content: p.content, time: p.time, id: p.id, stamp: p.stamp }));
   }
 
   th.scrollTop = th.scrollHeight;

@@ -311,7 +311,7 @@ function sendMessage(content) {
   fadeIds = new Set();
   for (const p of pendingMessages) {
     fadeIds.add("fade-" + p.id);
-    const entry = { side: "them", ghost: true, time: p.time, id: p.id };
+    const entry = { side: "them", ghost: true, time: p.time, id: p.id, content: p.content };
     if (p.stamp) entry.stamp = p.stamp;
     history.push(entry);
   }
@@ -402,7 +402,7 @@ function renderBubble(m) {
     if (fadeIds.has("fade-" + m.id)) cls += " ghost-fade";
   }
   b.className = cls;
-  b.textContent = m.ghost ? "" : m.content;
+  b.textContent = m.content || "";
   wrap.appendChild(b);
 
   if (m.stamp) {

@@ -270,10 +270,31 @@ class PeerTransport {
   connect(room, onJoined, onFull) {
     const hostId = hashRoom(room);
 
-    this.peer = new Peer(hostId);
+    // まずゲストとして接続を試みる
+    this.peer = new Peer();
 
     this.peer.on("open", () => {
-      this.isHost = true;
+      setStatus("ルームを探しています…");
+      const conn = this.peer.connect(hostId, { reliable: true });
+      this._setup(conn, onJoined, onFull);
+    });
+
+    this.peer.on("error", (err) => {
+      if (err.type === "peer-unavailable") {
+        // ホストがいない → 自分がホストになる
+        this.peer.destroy();
+        this._becomeHost(hostId, onJoined, onFull);
+      } else {
+        setStatus("接続エラー: " + err.type);
+      }
+    });
+  }
+
+  _becomeHost(hostId, onJoined, onFull) {
+    this.peer = new Peer(hostId);
+    this.isHost = true;
+
+    this.peer.on("open", () => {
       setStatus("相手の接続を待っています…");
 
       this.peer.on("connection", (conn) => {
@@ -290,25 +311,16 @@ class PeerTransport {
 
     this.peer.on("error", (err) => {
       if (err.type === "unavailable-id") {
+        // 別の人が同時にホストになった → ゲストとして再試行
         this.peer.destroy();
-        this._joinAsGuest(hostId, onJoined, onFull);
-      } else {
-        setStatus("接続エラー: " + err.type);
-      }
-    });
-  }
-
-  _joinAsGuest(hostId, onJoined, onFull) {
-    this.peer = new Peer();
-
-    this.peer.on("open", () => {
-      const conn = this.peer.connect(hostId, { reliable: true });
-      this._setup(conn, onJoined, onFull);
-    });
-
-    this.peer.on("error", (err) => {
-      if (err.type === "peer-unavailable") {
-        if (onFull) onFull();
+        this.peer = new Peer();
+        this.peer.on("open", () => {
+          const conn = this.peer.connect(hostId, { reliable: true });
+          this._setup(conn, onJoined, onFull);
+        });
+        this.peer.on("error", (err2) => {
+          setStatus("接続エラー: " + err2.type);
+        });
       } else {
         setStatus("接続エラー: " + err.type);
       }
@@ -326,6 +338,9 @@ class PeerTransport {
 
     conn.on("data", (data) => {
       if (data && data.type === "full") {
+        this.conn = null;
+        this.intentionalClose = true;
+        conn.close();
         if (onFull) onFull();
         return;
       }

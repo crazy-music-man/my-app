@@ -54,9 +54,35 @@
     flex: 0 0 auto; background: var(--bar); border-bottom: 1px solid #ece6dc;
     padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
     display: flex; align-items: center; gap: 10px;
+    position: relative;
   }
-  .header-info { flex: 1; font-size: 12px; color: var(--muted); line-height: 1.5; }
-  .reset { border:0; background:transparent; color:var(--muted); font-size:18px; padding:4px; }
+  .header-spacer { flex: 1; }
+  .menu-btn {
+    border: 0; background: transparent; color: var(--ink); font-size: 22px;
+    padding: 4px; cursor: pointer; line-height: 1;
+  }
+
+  /* ---- menu panel ---- */
+  .menu-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 90;
+  }
+  .menu-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 260px;
+    background: var(--bar); z-index: 100;
+    box-shadow: -4px 0 16px var(--shadow);
+    padding: calc(20px + env(safe-area-inset-top)) 20px 20px;
+    display: flex; flex-direction: column; gap: 20px;
+    animation: slideIn .2s ease;
+  }
+  @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  .menu-panel h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .menu-item { font-size: 13px; color: var(--muted); line-height: 1.8; }
+  .menu-item b { color: var(--ink); font-weight: 600; }
+  .menu-action {
+    border: 1px solid #e3dccf; background: #fff; border-radius: 10px;
+    padding: 10px; font-size: 14px; color: var(--ink); cursor: pointer; text-align: left;
+  }
+  .menu-action:active { background: #fbf9f5; }
 
   /* ---- thread ---- */
   .thread {
@@ -147,8 +173,8 @@
 
   <!-- チャット -->
   <header class="hidden" id="chatHeader">
-    <div class="header-info" id="headerInfo"></div>
-    <button class="reset" id="resetBtn" title="退出してやり直す">↺</button>
+    <div class="header-spacer"></div>
+    <button class="menu-btn" id="menuBtn" title="メニュー">☰</button>
   </header>
 
   <div class="thread hidden" id="thread"></div>
@@ -331,12 +357,6 @@ function formatTime(iso) {
 }
 
 function render() {
-  const info = $("headerInfo");
-  if (startedAt) {
-    info.innerHTML = `開始 ${formatTime(startedAt)}　／　最終更新 ${formatTime(updatedAt)}`;
-  } else {
-    info.textContent = "まだ会話は始まっていません";
-  }
   $("input").placeholder = "メッセージを入力…";
 
   const th = $thread();
@@ -453,13 +473,52 @@ $("input").addEventListener("keydown", (e) => {
 // 画面タップでピッカーを閉じる
 document.addEventListener("click", () => closePicker());
 
-// 退出してやり直す
-$("resetBtn").addEventListener("click", () => {
-  if (!confirm("退出してやり直しますか？（あなたの履歴は消えます）")) return;
-  localStorage.removeItem(storeKey());
-  if (transport) transport.close();
-  location.reload();
-});
+// ---- メニュー ----
+function openMenu() {
+  closeMenu();
+  const overlay = document.createElement("div");
+  overlay.className = "menu-overlay";
+  overlay.id = "menuOverlay";
+  overlay.addEventListener("click", closeMenu);
+
+  const panel = document.createElement("div");
+  panel.className = "menu-panel";
+  panel.id = "menuPanel";
+
+  const title = document.createElement("h3");
+  title.textContent = "メニュー";
+  panel.appendChild(title);
+
+  const info = document.createElement("div");
+  info.className = "menu-item";
+  if (startedAt) {
+    info.innerHTML = `<b>開始</b>　${formatTime(startedAt)}<br><b>最終更新</b>　${formatTime(updatedAt)}`;
+  } else {
+    info.textContent = "まだ会話は始まっていません";
+  }
+  panel.appendChild(info);
+
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "menu-action";
+  resetBtn.textContent = "↺ 退出してやり直す";
+  resetBtn.addEventListener("click", () => {
+    if (!confirm("退出してやり直しますか？（あなたの履歴は消えます）")) return;
+    localStorage.removeItem(storeKey());
+    if (transport) transport.close();
+    location.reload();
+  });
+  panel.appendChild(resetBtn);
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(panel);
+}
+
+function closeMenu() {
+  const o = $("menuOverlay"); if (o) o.remove();
+  const p = $("menuPanel"); if (p) p.remove();
+}
+
+$("menuBtn").addEventListener("click", openMenu);
 </script>
 </body>
 </html>

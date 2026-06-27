@@ -94,7 +94,6 @@
     0%   { color: var(--ink); border-color: transparent; background:#fff; }
     100% { color: transparent; border-color: var(--ghost-line); background: transparent; }
   }
-  .waiting { margin: auto; color: var(--muted); font-size: 13px; text-align:center; line-height:1.9; padding: 0 30px; }
   .empty { margin: auto; color: var(--muted); font-size: 13px; text-align:center; line-height:1.9; padding: 0 30px; }
 
   /* ---- composer ---- */
@@ -102,7 +101,6 @@
     flex: 0 0 auto; background: var(--bar); border-top: 1px solid #ece6dc;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   }
-  .composer.disabled { opacity: .5; pointer-events: none; }
   .stamps { display:flex; gap:6px; overflow-x:auto; padding: 2px 2px 8px; }
   .stamps button {
     flex: 0 0 auto; border:0; background:#f1ebe1; border-radius:999px;
@@ -174,35 +172,23 @@ function makeTransport(room, onMessage) {
    状態
    ========================================================= */
 const STAMPS = ["👍","❤️","😂","🙏","😮","😢","✨","👀"];
-let myId = null;      // このウインドウ固有のID（自他の区別・保存の分離に使う）
+let myId = null;
 let room = "room1";
 let transport = null;
 
-let history = [];     // 自分の経験の記録（保存される）
-                      //   { side:"me",   kind, content, time, id }
-                      //   { side:"them", ghost:true, time, id } ← 相手の言葉は内容を捨てた残骸
-let turn = "open";    // "open"=まだ誰も話していない（どちらからでも可） / "me" / "them"
-let role = null;      // null / "starter"(先に話す人) / "responder"(あとに話す人)
-let pending = null;   // 受信中の相手メッセージ（メモリのみ・保存しない）
-                      //   { kind, content, time, id }
-let fadeId = null;    // 直前に消した残骸をフェードさせる用
+let history = [];          // 自分の経験の記録（保存される）
+let pendingMessages = [];  // 受信中の相手メッセージ群（メモリのみ・保存しない）
+let fadeIds = new Set();   // 直前に消した残骸をフェードさせる用
 
-// 入力できる＝自分の番、または「まだ誰も話していない」とき
-const canSend = () => (turn === "me" || turn === "open");
-const storeKey = () => `kieru_pair_v2::${room}::${myId}`;
+const storeKey = () => `kieru_pair_v3::${room}::${myId}`;
 
 function save() {
-  // 相手の言葉(pending/contentつき)は決して保存しない
-  localStorage.setItem(storeKey(), JSON.stringify({ history, turn, role }));
+  localStorage.setItem(storeKey(), JSON.stringify({ history }));
 }
 function loadLocal() {
   try {
     const s = JSON.parse(localStorage.getItem(storeKey()));
-    if (s && Array.isArray(s.history)) {
-      history = s.history;
-      turn = s.turn || "open";
-      role = s.role || null;
-    }
+    if (s && Array.isArray(s.history)) history = s.history;
   } catch (e) {}
 }
 function now() {
@@ -234,7 +220,6 @@ function enter() {
   $("thread").classList.remove("hidden");
   $("composer").classList.remove("hidden");
 
-  // 後から入った側が、相手の未返信メッセージを取りこぼさないよう挨拶
   transport.send({ type: "hello", from: myId });
   render();
 }
@@ -246,35 +231,26 @@ function onMessage(obj) {
   if (!obj || obj.from === myId) return;
 
   if (obj.type === "hello") {
-    // 相手が今入ってきた。自分が返信待ち（turn==="them"）なら、
-    // 直近の自分のメッセージを送り直して相手の画面に届ける。
-    if (turn === "them") {
-      const lastMine = [...history].reverse().find(e => e.side === "me");
-      if (lastMine) {
-        transport.send({ type:"msg", from: myId, kind: lastMine.kind,
-                         content: lastMine.content, time: lastMine.time, id: lastMine.id });
-      }
+    // 相手が今入ってきた。未返信の自分のメッセージがあれば送り直す
+    const lastMine = [...history].reverse().find(e => e.side === "me");
+    if (lastMine) {
+      transport.send({ type:"msg", from: myId, kind: lastMine.kind,
+                       content: lastMine.content, time: lastMine.time, id: lastMine.id });
     }
     return;
   }
 
   if (obj.type === "msg") {
-    if (pending && pending.id === obj.id) return;
+    if (pendingMessages.some(p => p.id === obj.id)) return;
     if (history.some(e => e.id === obj.id)) return;
 
-    if (turn === "open" && role === null) role = "responder";
-
-    pending = { kind: obj.kind, content: obj.content, time: obj.time, id: obj.id };
-    turn = "me";
-    save();
+    pendingMessages.push({ kind: obj.kind, content: obj.content, time: obj.time, id: obj.id });
     render();
   }
 
   if (obj.type === "reaction") {
-    // 相手が自分のメッセージにリアクションした → 自分の履歴にスタンプをくっつける
     const target = history.find(e => e.id === obj.targetId && e.side === "me");
     if (target) target.stamp = obj.stamp;
-    turn = "me";
     save();
     render();
   }
@@ -284,43 +260,44 @@ function onMessage(obj) {
    送信
    ========================================================= */
 function sendMessage(content) {
-  if (!canSend()) return;
-
-  if (turn === "open" && role === null) role = "starter";
-
-  // 返信した瞬間、いま見えている相手の言葉を「内容を捨てて」残骸にする
-  if (pending) {
-    fadeId = "fade-" + pending.id;
-    history.push({ side: "them", ghost: true, time: pending.time, id: pending.id });
-    pending = null;
+  // 送信した瞬間、それまでに届いていた相手のメッセージをすべて残骸化
+  fadeIds = new Set();
+  for (const p of pendingMessages) {
+    fadeIds.add("fade-" + p.id);
+    history.push({ side: "them", ghost: true, time: p.time, id: p.id });
   }
+  pendingMessages = [];
 
   const id = Date.now() + "-" + Math.random().toString(36).slice(2,6);
   const t = now();
   history.push({ side: "me", kind: "text", content, time: t, id });
   transport.send({ type: "msg", from: myId, kind: "text", content, time: t, id });
 
-  turn = "them";
   save();
   render();
-  fadeId = null;
+  fadeIds = new Set();
 }
 
 function sendReaction(stamp) {
-  if (!pending) return;        // リアクションは相手のメッセージがあるときだけ
+  if (pendingMessages.length === 0) return;
 
-  if (turn === "open" && role === null) role = "starter";
+  // 直近の相手メッセージにリアクションをくっつけて残骸化、他もまとめて残骸化
+  fadeIds = new Set();
+  const last = pendingMessages[pendingMessages.length - 1];
+  for (const p of pendingMessages) {
+    fadeIds.add("fade-" + p.id);
+    if (p.id === last.id) {
+      history.push({ side: "them", ghost: true, time: p.time, id: p.id, stamp });
+    } else {
+      history.push({ side: "them", ghost: true, time: p.time, id: p.id });
+    }
+  }
+  transport.send({ type: "reaction", from: myId, stamp, targetId: last.id });
+  pendingMessages = [];
 
-  // 相手のメッセージを残骸化し、リアクションをくっつける
-  fadeId = "fade-" + pending.id;
-  history.push({ side: "them", ghost: true, time: pending.time, id: pending.id, stamp });
-  transport.send({ type: "reaction", from: myId, stamp, targetId: pending.id });
-  pending = null;
-
-  turn = "them";
   save();
   render();
-  fadeId = null;
+  fadeIds = new Set();
 }
 
 /* =========================================================
@@ -329,24 +306,16 @@ function sendReaction(stamp) {
 const $thread = () => $("thread");
 
 function render() {
-  // header
   $("turnLabel").innerHTML = `<small>あいことば: ${room}</small>`;
+  $("input").placeholder = "メッセージを入力…";
 
-  // composer 有効/無効
-  const comp = $("composer");
-  comp.classList.toggle("disabled", !canSend());
-  $("input").placeholder = canSend() ? "メッセージを入力…" : "相手の番です…";
-
-  // thread
   const th = $thread();
   th.innerHTML = "";
 
-  if (history.length === 0 && !pending) {
+  if (history.length === 0 && pendingMessages.length === 0) {
     const e = document.createElement("div");
     e.className = "empty";
-    e.textContent = canSend()
-      ? "最初のひとことを送ってみてください。"
-      : "相手が話しはじめるのを待っています…";
+    e.textContent = "最初のひとことを送ってみてください。";
     th.appendChild(e);
     return;
   }
@@ -354,19 +323,9 @@ function render() {
   for (const m of history) {
     th.appendChild(renderBubble(m));
   }
-  if (pending) {
-    th.appendChild(renderBubble({ side:"them", kind: pending.kind, content: pending.content, time: pending.time }));
+  for (const p of pendingMessages) {
+    th.appendChild(renderBubble({ side:"them", kind: p.kind, content: p.content, time: p.time }));
   }
-
-  // ターンの案内をスレッド末尾に表示
-  const hint = document.createElement("div");
-  hint.className = "waiting";
-  if (turn === "me" || turn === "open") {
-    hint.textContent = "なにか返事してみましょう";
-  } else {
-    hint.textContent = "相手の返信を待っています…";
-  }
-  th.appendChild(hint);
 
   th.scrollTop = th.scrollHeight;
 }
@@ -381,7 +340,7 @@ function renderBubble(m) {
   let cls = "bubble " + (mine ? "mine" : "them");
   if (m.ghost) {
     cls += " ghost";
-    if (fadeId && ("fade-" + m.id) === fadeId) cls += " ghost-fade";
+    if (fadeIds.has("fade-" + m.id)) cls += " ghost-fade";
   }
   b.className = cls;
   b.textContent = m.ghost ? "" : m.content;
@@ -411,14 +370,14 @@ const $send  = () => $("sendBtn");
 
 document.addEventListener("input", (e) => {
   if (e.target.id !== "input") return;
-  $send().disabled = e.target.value.trim() === "" || !canSend();
+  $send().disabled = e.target.value.trim() === "";
   e.target.style.height = "auto";
   e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
 });
 
 function submitText() {
   const v = $input().value.trim();
-  if (!v || !canSend()) return;
+  if (!v) return;
   sendMessage(v);
   $input().value = ""; $input().style.height = "auto"; $send().disabled = true;
 }

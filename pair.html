@@ -112,6 +112,7 @@
   .bubble.ghost {
     background: transparent; border: 1px dashed var(--ghost-line); color: transparent;
     min-width: 54px; min-height: 38px; border-radius: 18px; border-bottom-left-radius: 5px;
+    user-select: none; -webkit-user-select: none;
   }
   .ghost-fade { animation: fade .9s ease forwards; }
   @keyframes fade {
@@ -311,7 +312,7 @@ function sendMessage(content) {
   fadeIds = new Set();
   for (const p of pendingMessages) {
     fadeIds.add("fade-" + p.id);
-    const entry = { side: "them", ghost: true, time: p.time, id: p.id, content: p.content };
+    const entry = { side: "them", ghost: true, time: p.time, id: p.id, len: p.content.length };
     if (p.stamp) entry.stamp = p.stamp;
     history.push(entry);
   }
@@ -402,7 +403,7 @@ function renderBubble(m) {
     if (fadeIds.has("fade-" + m.id)) cls += " ghost-fade";
   }
   b.className = cls;
-  b.textContent = m.content || "";
+  b.textContent = m.ghost ? "　".repeat(m.len || 3) : (m.content || "");
   wrap.appendChild(b);
 
   if (m.stamp) {

@@ -96,17 +96,33 @@
   }
   .empty { margin: auto; color: var(--muted); font-size: 13px; text-align:center; line-height:1.9; padding: 0 30px; }
 
+  /* ---- reaction trigger & picker ---- */
+  .row.left { align-items: flex-start; }
+  .react-trigger {
+    border: 0; background: #f1ebe1; border-radius: 50%; width: 28px; height: 28px;
+    font-size: 14px; line-height: 1; color: var(--muted); flex: 0 0 auto;
+    margin-top: 6px; margin-left: 4px; cursor: pointer;
+  }
+  .react-trigger:active { transform: scale(.9); }
+  .react-picker {
+    display: flex; gap: 4px; background: #fff; border: 1px solid #ece6dc;
+    border-radius: 999px; padding: 4px 8px; box-shadow: 0 4px 12px var(--shadow);
+    position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 10;
+    animation: pop .15s ease;
+  }
+  .react-picker button {
+    border: 0; background: transparent; font-size: 22px; padding: 4px;
+    border-radius: 50%; width: 36px; height: 36px; line-height: 1; cursor: pointer;
+  }
+  .react-picker button:hover { background: #f4f1ec; }
+  .react-picker button:active { transform: scale(.85); }
+  .bubble-row-wrap { position: relative; }
+
   /* ---- composer ---- */
   .composer {
     flex: 0 0 auto; background: var(--bar); border-top: 1px solid #ece6dc;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   }
-  .stamps { display:flex; gap:6px; overflow-x:auto; padding: 2px 2px 8px; }
-  .stamps button {
-    flex: 0 0 auto; border:0; background:#f1ebe1; border-radius:999px;
-    font-size:20px; width:42px; height:42px; line-height:1;
-  }
-  .stamps button:active { transform: scale(.9); }
   .inputrow { display:flex; gap:8px; align-items:flex-end; }
   textarea {
     flex:1; resize:none; border:1px solid #e3dccf; border-radius:20px;
@@ -141,7 +157,6 @@
   <div class="thread hidden" id="thread"></div>
 
   <div class="composer hidden" id="composer">
-    <div class="stamps" id="stamps"></div>
     <div class="inputrow">
       <textarea id="input" rows="1" placeholder="メッセージを入力…"></textarea>
       <button class="send" id="sendBtn" disabled>↑</button>
@@ -264,7 +279,9 @@ function sendMessage(content) {
   fadeIds = new Set();
   for (const p of pendingMessages) {
     fadeIds.add("fade-" + p.id);
-    history.push({ side: "them", ghost: true, time: p.time, id: p.id });
+    const entry = { side: "them", ghost: true, time: p.time, id: p.id };
+    if (p.stamp) entry.stamp = p.stamp;
+    history.push(entry);
   }
   pendingMessages = [];
 
@@ -278,26 +295,18 @@ function sendMessage(content) {
   fadeIds = new Set();
 }
 
-function sendReaction(stamp) {
-  if (pendingMessages.length === 0) return;
-
-  // 直近の相手メッセージにリアクションをくっつけて残骸化、他もまとめて残骸化
-  fadeIds = new Set();
-  const last = pendingMessages[pendingMessages.length - 1];
-  for (const p of pendingMessages) {
-    fadeIds.add("fade-" + p.id);
-    if (p.id === last.id) {
-      history.push({ side: "them", ghost: true, time: p.time, id: p.id, stamp });
-    } else {
-      history.push({ side: "them", ghost: true, time: p.time, id: p.id });
-    }
+function sendReaction(targetId, stamp) {
+  // pending にあるか history にあるか探してスタンプをつける
+  const inPending = pendingMessages.find(p => p.id === targetId);
+  if (inPending) {
+    inPending.stamp = stamp;
+  } else {
+    const inHistory = history.find(e => e.id === targetId && e.side === "them");
+    if (inHistory) inHistory.stamp = stamp;
   }
-  transport.send({ type: "reaction", from: myId, stamp, targetId: last.id });
-  pendingMessages = [];
-
+  transport.send({ type: "reaction", from: myId, stamp, targetId });
   save();
   render();
-  fadeIds = new Set();
 }
 
 /* =========================================================
@@ -330,11 +339,20 @@ function render() {
   th.scrollTop = th.scrollHeight;
 }
 
+let openPickerId = null;
+
+function closePicker() {
+  openPickerId = null;
+  document.querySelectorAll(".react-picker").forEach(el => el.remove());
+}
+
 function renderBubble(m) {
   const mine = m.side === "me";
   const row = document.createElement("div");
   row.className = "row " + (mine ? "right" : "left");
+
   const wrap = document.createElement("div");
+  wrap.className = "bubble-row-wrap";
 
   const b = document.createElement("div");
   let cls = "bubble " + (mine ? "mine" : "them");
@@ -359,6 +377,34 @@ function renderBubble(m) {
   wrap.appendChild(t);
 
   row.appendChild(wrap);
+
+  // 相手のメッセージにはリアクションボタンをつける
+  if (!mine && m.id) {
+    const trigger = document.createElement("button");
+    trigger.className = "react-trigger";
+    trigger.textContent = "☺";
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (openPickerId === m.id) { closePicker(); return; }
+      closePicker();
+      openPickerId = m.id;
+      const picker = document.createElement("div");
+      picker.className = "react-picker";
+      STAMPS.forEach(s => {
+        const btn = document.createElement("button");
+        btn.textContent = s;
+        btn.addEventListener("click", (e2) => {
+          e2.stopPropagation();
+          sendReaction(m.id, s);
+          closePicker();
+        });
+        picker.appendChild(btn);
+      });
+      wrap.appendChild(picker);
+    });
+    row.appendChild(trigger);
+  }
+
   return row;
 }
 
@@ -388,13 +434,8 @@ $("input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitText(); }
 });
 
-// スタンプ
-STAMPS.forEach(s => {
-  const btn = document.createElement("button");
-  btn.textContent = s;
-  btn.addEventListener("click", () => sendReaction(s));
-  $("stamps").appendChild(btn);
-});
+// 画面タップでピッカーを閉じる
+document.addEventListener("click", () => closePicker());
 
 // 退出してやり直す
 $("resetBtn").addEventListener("click", () => {

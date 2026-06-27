@@ -66,9 +66,9 @@
   }
   .row { display: flex; }
   .row.right { justify-content: flex-end; }
-  .row.left  { justify-content: flex-start; }
+  .row.left  { justify-content: flex-start; align-items: flex-start; }
   .bubble {
-    max-width: 78%; padding: 10px 13px; border-radius: 18px;
+    max-width: 70%; padding: 10px 13px; border-radius: 18px;
     font-size: 15.5px; line-height: 1.45; word-break: break-word;
     position: relative; animation: pop .18s ease;
   }
@@ -97,11 +97,10 @@
   .empty { margin: auto; color: var(--muted); font-size: 13px; text-align:center; line-height:1.9; padding: 0 30px; }
 
   /* ---- reaction trigger & picker ---- */
-  .row.left { align-items: flex-start; gap: 2px; }
   .react-trigger {
-    border: 0; background: #f1ebe1; border-radius: 50%; width: 28px; height: 28px;
-    font-size: 14px; line-height: 1; color: var(--muted); flex: 0 0 auto;
-    margin-top: 6px; cursor: pointer;
+    border: 0; background: #f1ebe1; border-radius: 50%; width: 26px; height: 26px;
+    font-size: 13px; line-height: 1; color: var(--muted); flex: 0 0 auto;
+    margin-top: 6px; margin-left: -2px; cursor: pointer;
   }
   .react-trigger:active { transform: scale(.9); }
   .react-picker {

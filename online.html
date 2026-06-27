@@ -176,7 +176,6 @@
 
   .hidden { display: none !important; }
 </style>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
   <!-- パスワード画面 -->
@@ -189,7 +188,7 @@
 
   <!-- ロビー -->
   <div id="lobby" class="hidden">
-    <p>同じ「あいことば」を入れた二人がつながります。</p>
+    <p>同じ「あいことば」を入れた二人がつながります。<br>同じWiFi内の端末でこのページを開いてください。</p>
     <div id="lobbyStatus"></div>
     <div class="room">
       <label for="roomInput" style="font-size:13px;color:var(--muted)">あいことば</label>
@@ -245,116 +244,58 @@ $("gateInput").addEventListener("keydown", (e) => {
 });
 
 /* =========================================================
-   PeerJS Transport
-   あいことばからPeer IDを生成し、P2Pで接続する。
+   WebSocket Transport
+   サーバー(server.py)に接続し、あいことばでルームに参加。
+   同じルームの相手とメッセージを中継する。
    ========================================================= */
-function hashRoom(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) - h) + str.charCodeAt(i);
-    h |= 0;
-  }
-  return "kieru-" + Math.abs(h).toString(36);
-}
-
-class PeerTransport {
+class WSTransport {
   constructor(onMessage) {
-    this.peer = null;
-    this.conn = null;
+    this.ws = null;
     this.onMessage = onMessage;
     this.queue = [];
     this.intentionalClose = false;
-    this.isHost = false;
   }
 
   connect(room, onJoined, onFull) {
-    const hostId = hashRoom(room);
+    const host = location.hostname;
+    const wsPort = 8001;
+    this.ws = new WebSocket(`ws://${host}:${wsPort}`);
 
-    // まずゲストとして接続を試みる
-    this.peer = new Peer();
-
-    this.peer.on("open", () => {
-      setStatus("ルームを探しています…");
-      const conn = this.peer.connect(hostId, { reliable: true });
-      this._setup(conn, onJoined, onFull);
+    this.ws.addEventListener("open", () => {
+      this.ws.send(JSON.stringify({ type: "join", room }));
     });
 
-    this.peer.on("error", (err) => {
-      if (err.type === "peer-unavailable") {
-        // ホストがいない → 自分がホストになる
-        this.peer.destroy();
-        this._becomeHost(hostId, onJoined, onFull);
-      } else {
-        setStatus("接続エラー: " + err.type);
+    this.ws.addEventListener("message", (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+
+      if (data.type === "joined") {
+        for (const obj of this.queue) this.ws.send(JSON.stringify(obj));
+        this.queue = [];
+        if (onJoined) onJoined();
+        return;
       }
-    });
-  }
-
-  _becomeHost(hostId, onJoined, onFull) {
-    this.peer = new Peer(hostId);
-    this.isHost = true;
-
-    this.peer.on("open", () => {
-      setStatus("相手の接続を待っています…");
-
-      this.peer.on("connection", (conn) => {
-        if (this.conn) {
-          conn.on("open", () => {
-            conn.send({ type: "full" });
-            setTimeout(() => conn.close(), 300);
-          });
-          return;
-        }
-        this._setup(conn, onJoined);
-      });
-    });
-
-    this.peer.on("error", (err) => {
-      if (err.type === "unavailable-id") {
-        // 別の人が同時にホストになった → ゲストとして再試行
-        this.peer.destroy();
-        this.peer = new Peer();
-        this.peer.on("open", () => {
-          const conn = this.peer.connect(hostId, { reliable: true });
-          this._setup(conn, onJoined, onFull);
-        });
-        this.peer.on("error", (err2) => {
-          setStatus("接続エラー: " + err2.type);
-        });
-      } else {
-        setStatus("接続エラー: " + err.type);
-      }
-    });
-  }
-
-  _setup(conn, onJoined, onFull) {
-    this.conn = conn;
-
-    conn.on("open", () => {
-      for (const obj of this.queue) conn.send(obj);
-      this.queue = [];
-      if (onJoined) onJoined();
-    });
-
-    conn.on("data", (data) => {
-      if (data && data.type === "full") {
-        this.conn = null;
+      if (data.type === "full") {
         this.intentionalClose = true;
-        conn.close();
+        this.ws.close();
         if (onFull) onFull();
         return;
       }
       this.onMessage(data);
     });
 
-    conn.on("close", () => {
-      if (!this.intentionalClose) setStatus("相手との接続が切れました");
+    this.ws.addEventListener("close", () => {
+      if (!this.intentionalClose) setStatus("サーバーとの接続が切れました");
+    });
+
+    this.ws.addEventListener("error", () => {
+      setStatus("サーバーに接続できません。server.py が起動しているか確認してください。");
     });
   }
 
   send(obj) {
-    if (this.conn && this.conn.open) {
-      this.conn.send(obj);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(obj));
     } else {
       this.queue.push(obj);
     }
@@ -362,8 +303,7 @@ class PeerTransport {
 
   close() {
     this.intentionalClose = true;
-    if (this.conn) this.conn.close();
-    if (this.peer) this.peer.destroy();
+    if (this.ws) this.ws.close();
   }
 }
 
@@ -422,7 +362,7 @@ $("startBtn").addEventListener("click", () => {
   }
   loadLocal();
 
-  transport = new PeerTransport(onMessage);
+  transport = new WSTransport(onMessage);
   transport.connect(room, () => {
     setStatus("");
     $("lobby").classList.add("hidden");

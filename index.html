@@ -261,11 +261,20 @@ $input.addEventListener("input", () => {
   $input.style.height = "auto";
   $input.style.height = Math.min($input.scrollHeight, 120) + "px";
 });
-$send.addEventListener("click", () => {
+function submitText() {
   const v = $input.value.trim();
   if (!v) return;
   sendMessage("text", v);
   $input.value = ""; $input.style.height = "auto"; $send.disabled = true;
+}
+$send.addEventListener("click", submitText);
+
+// Mac: ⌘+Enter / Windows: Ctrl+Enter で送信
+$input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    submitText();
+  }
 });
 
 const $stamps = document.getElementById("stamps");

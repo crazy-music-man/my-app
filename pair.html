@@ -67,8 +67,9 @@
   .row { display: flex; }
   .row.right { justify-content: flex-end; }
   .row.left  { justify-content: flex-start; align-items: flex-start; }
+  .bubble-row-wrap { max-width: 70%; width: fit-content; }
   .bubble {
-    max-width: 70%; padding: 10px 13px; border-radius: 18px;
+    padding: 10px 13px; border-radius: 18px;
     font-size: 15.5px; line-height: 1.45; word-break: break-word;
     position: relative; animation: pop .18s ease;
   }
@@ -98,9 +99,9 @@
 
   /* ---- reaction trigger & picker ---- */
   .react-trigger {
-    border: 0; background: #f1ebe1; border-radius: 50%; width: 26px; height: 26px;
-    font-size: 13px; line-height: 1; color: var(--muted); flex: 0 0 auto;
-    margin-top: 6px; margin-left: -2px; cursor: pointer;
+    border: 0; background: #f1ebe1; border-radius: 50%; width: 24px; height: 24px;
+    font-size: 12px; line-height: 1; color: var(--muted); flex: 0 0 auto;
+    margin-top: 4px; cursor: pointer;
   }
   .react-trigger:active { transform: scale(.9); }
   .react-picker {

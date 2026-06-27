@@ -35,19 +35,28 @@
     align-items: center; gap: 18px; padding: 28px; text-align: center;
   }
   #lobby p { color: var(--muted); font-size: 13.5px; line-height: 1.8; margin: 0; max-width: 320px; }
-  .room { display: flex; gap: 8px; align-items: center; }
-  .room input {
-    border: 1px solid #e3dccf; border-radius: 12px; padding: 10px 14px;
-    font-size: 16px; background: #fbf9f5; width: 200px; text-align: center;
-  }
-  .room input:focus { outline: none; border-color: var(--accent); }
-  .lobby-section { width: 100%; max-width: 300px; }
+  .lobby-section { width: 100%; max-width: 300px; display: flex; flex-direction: column; gap: 10px; }
   .lobby-section button {
-    width: 100%; border: 1px solid #e3dccf; background: #fff; border-radius: 14px;
+    border: 1px solid #e3dccf; background: #fff; border-radius: 14px;
     padding: 14px; font-size: 15px; font-weight: 600; color: var(--ink); cursor: pointer;
   }
+  .lobby-section button small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 3px; }
   .lobby-section button:active { background: #fffaf3; border-color: var(--accent); }
-  #lobbyStatus { font-size: 13px; color: var(--accent); min-height: 20px; }
+  .lobby-divider { color: var(--muted); font-size: 12px; }
+  .lobby-section input {
+    border: 1px solid #e3dccf; border-radius: 12px; padding: 10px 14px;
+    font-size: 16px; background: #fbf9f5; text-align: center; width: 100%;
+  }
+  .lobby-section input:focus { outline: none; border-color: var(--accent); }
+  #lobbyStatus {
+    font-size: 13px; color: var(--accent); min-height: 20px;
+  }
+  .room-id-display {
+    font-size: 20px; font-weight: 700; letter-spacing: 2px;
+    color: var(--ink); padding: 10px; background: #fbf9f5;
+    border: 1px dashed #e3dccf; border-radius: 12px; text-align: center;
+    user-select: all; -webkit-user-select: all;
+  }
 
   /* ---- header ---- */
   header {
@@ -157,18 +166,23 @@
 
   .hidden { display: none !important; }
 </style>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
   <!-- ロビー -->
   <div id="lobby">
-    <p>同じ「あいことば」を入れた二人がつながります。<br>同じWiFi内の端末でこのページを開いてください。</p>
+    <p>二つの端末でこのページを開き、片方が「ルームを作る」、もう片方が表示されたIDを入力して「接続する」と会話がはじまります。</p>
     <div id="lobbyStatus"></div>
-    <div class="room">
-      <label for="roomInput" style="font-size:13px;color:var(--muted)">あいことば</label>
-      <input id="roomInput" placeholder="" autocomplete="off" />
+
+    <div class="lobby-section" id="lobbyCreate">
+      <button id="createBtn">ルームを作る<small>IDが発行されます。相手に共有してください</small></button>
     </div>
-    <div class="lobby-section">
-      <button id="startBtn">会話をはじめる</button>
+
+    <div class="lobby-divider">または</div>
+
+    <div class="lobby-section" id="lobbyJoin">
+      <input id="joinInput" placeholder="相手のルームIDを入力" autocomplete="off" />
+      <button id="joinBtn">接続する</button>
     </div>
   </div>
 
@@ -189,64 +203,71 @@
 
 <script>
 /* =========================================================
-   WebSocket Transport
-   サーバー(server.py)に接続し、あいことばでルームに参加。
-   同じルームの相手とメッセージを中継する。
+   PeerJS Transport
    ========================================================= */
-class WSTransport {
-  constructor(onMessage) {
-    this.ws = null;
+class PeerJSTransport {
+  constructor(onMessage, onConnected) {
+    this.conn = null;
     this.onMessage = onMessage;
+    this.onConnected = onConnected;
+    this.peer = null;
     this.queue = [];
-    this.intentionalClose = false;
   }
 
-  connect(room, onJoined) {
-    const host = location.hostname;
-    const wsPort = 8001;
-    this.ws = new WebSocket(`ws://${host}:${wsPort}`);
-
-    this.ws.addEventListener("open", () => {
-      this.ws.send(JSON.stringify({ type: "join", room }));
+  createRoom(onRoomId) {
+    this.peer = new Peer();
+    this.peer.on("open", (id) => {
+      onRoomId(id);
     });
+    this.peer.on("connection", (conn) => {
+      this._setupConn(conn);
+    });
+    this.peer.on("error", (err) => {
+      setStatus("エラー: " + err.type);
+    });
+  }
 
-    this.ws.addEventListener("message", (e) => {
-      let data;
-      try { data = JSON.parse(e.data); } catch { return; }
+  joinRoom(roomId) {
+    this.peer = new Peer();
+    this.peer.on("open", () => {
+      const conn = this.peer.connect(roomId, { reliable: true });
+      this._setupConn(conn);
+    });
+    this.peer.on("error", (err) => {
+      if (err.type === "peer-unavailable") {
+        setStatus("そのルームIDは見つかりませんでした");
+      } else {
+        setStatus("エラー: " + err.type);
+      }
+    });
+  }
 
-      if (data.type === "joined") {
-        for (const obj of this.queue) this.ws.send(JSON.stringify(obj));
-        this.queue = [];
-        if (onJoined) onJoined();
-        return;
-      }
-      if (data.type === "full") {
-        if (this.onFull) this.onFull();
-        return;
-      }
+  _setupConn(conn) {
+    this.conn = conn;
+    conn.on("open", () => {
+      for (const obj of this.queue) conn.send(obj);
+      this.queue = [];
+      if (this.onConnected) this.onConnected();
+    });
+    conn.on("data", (data) => {
       this.onMessage(data);
     });
-
-    this.ws.addEventListener("close", () => {
-      if (!this.intentionalClose) setStatus("サーバーとの接続が切れました");
-    });
-
-    this.ws.addEventListener("error", () => {
-      setStatus("サーバーに接続できません。server.py が起動しているか確認してください。");
+    conn.on("close", () => {
+      setStatus("相手との接続が切れました");
     });
   }
 
   send(obj) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(obj));
+    if (this.conn && this.conn.open) {
+      this.conn.send(obj);
     } else {
       this.queue.push(obj);
     }
   }
 
   close() {
-    this.intentionalClose = true;
-    if (this.ws) this.ws.close();
+    if (this.conn) this.conn.close();
+    if (this.peer) this.peer.destroy();
   }
 }
 
@@ -255,7 +276,7 @@ class WSTransport {
    ========================================================= */
 const STAMPS = ["👍","❤️","😂","🙏","😮","😢","✨","👀"];
 let myId = null;
-let room = "";
+let roomId = null;
 let transport = null;
 
 let history = [];
@@ -264,7 +285,7 @@ let fadeIds = new Set();
 let startedAt = null;
 let updatedAt = null;
 
-const storeKey = () => `kieru_remote_v2::${room}::${myId}`;
+const storeKey = () => `kieru_remote_v1::${roomId}::${myId}`;
 
 function save() {
   localStorage.setItem(storeKey(), JSON.stringify({ history, startedAt, updatedAt }));
@@ -293,13 +314,7 @@ function setStatus(msg) {
   $("lobbyStatus").textContent = msg;
 }
 
-$("startBtn").addEventListener("click", () => {
-  room = ($("roomInput").value || "").trim();
-  if (!room) { setStatus("あいことばを入力してください"); return; }
-
-  $("startBtn").disabled = true;
-  setStatus("接続しています…");
-
+function enterChat() {
   myId = sessionStorage.getItem("kieru_wid");
   if (!myId) {
     myId = "w-" + Math.random().toString(36).slice(2, 10);
@@ -307,22 +322,57 @@ $("startBtn").addEventListener("click", () => {
   }
   loadLocal();
 
-  transport = new WSTransport(onMessage);
-  transport.onFull = () => {
-    setStatus("ごめんなさい。このルームにはすでに二人います。");
-    $("startBtn").disabled = false;
-    transport.close();
-  };
-  transport.connect(room, () => {
-    setStatus("");
-    $("lobby").classList.add("hidden");
-    $("chatHeader").classList.remove("hidden");
-    $("thread").classList.remove("hidden");
-    $("composer").classList.remove("hidden");
+  $("lobby").classList.add("hidden");
+  $("chatHeader").classList.remove("hidden");
+  $("thread").classList.remove("hidden");
+  $("composer").classList.remove("hidden");
 
-    transport.send({ type: "hello", from: myId });
-    render();
+  transport.send({ type: "hello", from: myId });
+  render();
+}
+
+// ルームを作る
+$("createBtn").addEventListener("click", () => {
+  $("createBtn").disabled = true;
+  setStatus("ルームを準備しています…");
+
+  transport = new PeerJSTransport(onMessage, () => {
+    setStatus("接続しました！");
+    enterChat();
   });
+
+  transport.createRoom((id) => {
+    roomId = id;
+    setStatus("相手の接続を待っています…");
+    // ルームIDを表示
+    const createSection = $("lobbyCreate");
+    createSection.innerHTML = "";
+    const label = document.createElement("div");
+    label.style.cssText = "font-size:12px;color:var(--muted);margin-bottom:4px";
+    label.textContent = "このルームIDを相手に共有してください";
+    createSection.appendChild(label);
+    const idBox = document.createElement("div");
+    idBox.className = "room-id-display";
+    idBox.textContent = id;
+    createSection.appendChild(idBox);
+    // 接続側を無効化
+    $("lobbyJoin").classList.add("hidden");
+  });
+});
+
+// ルームに接続する
+$("joinBtn").addEventListener("click", () => {
+  const id = $("joinInput").value.trim();
+  if (!id) { setStatus("ルームIDを入力してください"); return; }
+  $("joinBtn").disabled = true;
+  setStatus("接続しています…");
+  roomId = id;
+
+  transport = new PeerJSTransport(onMessage, () => {
+    setStatus("接続しました！");
+    enterChat();
+  });
+  transport.joinRoom(id);
 });
 
 /* =========================================================
@@ -551,7 +601,7 @@ function openMenu() {
 
   const roomInfo = document.createElement("div");
   roomInfo.className = "menu-item";
-  roomInfo.innerHTML = `<b>あいことば</b>　${room || "—"}`;
+  roomInfo.innerHTML = `<b>ルームID</b>　${roomId || "—"}`;
   panel.appendChild(roomInfo);
 
   const resetBtn = document.createElement("button");
@@ -561,17 +611,7 @@ function openMenu() {
     if (!confirm("退出してやり直しますか？（あなたの履歴は消えます）")) return;
     localStorage.removeItem(storeKey());
     if (transport) transport.close();
-    transport = null;
-    history = []; pendingMessages = []; fadeIds = new Set();
-    startedAt = null; updatedAt = null; room = "";
-    closeMenu();
-    $("chatHeader").classList.add("hidden");
-    $("thread").classList.add("hidden");
-    $("composer").classList.add("hidden");
-    $("lobby").classList.remove("hidden");
-    $("roomInput").value = "";
-    $("startBtn").disabled = false;
-    setStatus("");
+    location.reload();
   });
   panel.appendChild(resetBtn);
 

@@ -75,9 +75,16 @@
   @keyframes pop { from { transform: scale(.96); opacity:.4 } to { transform: scale(1); opacity:1 } }
   .bubble.mine  { background: var(--mine); color: var(--mine-text); border-bottom-right-radius: 5px; }
   .bubble.them  { background: #fff; color: var(--ink); border:1px solid #ece6dc; border-bottom-left-radius: 5px; }
-  .bubble.stamp { font-size: 30px; padding: 4px 10px; background: transparent; border: none; }
   .time { font-size: 10px; color: var(--muted); margin: 2px 6px 0; text-align: right; }
   .row.left .time { text-align: left; }
+  .reaction {
+    font-size: 20px; display: inline-block;
+    background: #fff; border: 1px solid #ece6dc; border-radius: 999px;
+    padding: 1px 6px; margin-top: -6px; position: relative; z-index: 1;
+    animation: pop .18s ease;
+  }
+  .row.left .reaction { margin-left: 8px; }
+  .row.right .reaction { margin-right: 8px; align-self: flex-end; }
   .bubble.ghost {
     background: transparent; border: 1px dashed var(--ghost-line); color: transparent;
     min-width: 54px; min-height: 38px; border-radius: 18px; border-bottom-left-radius: 5px;
@@ -117,8 +124,7 @@
 <body>
   <!-- ロビー：役割を選んで入室 -->
   <div id="lobby">
-    <h1>消えていく会話</h1>
-    <p>同じ「あいことば」を入れた二人がつながります。<br>まず二つのウインドウ（または端末）でこのページを開いてください。<br>最初に話しかけた人が「先に話す人」になります。</p>
+    <p>同じ「あいことば」を入れた二人がつながります。<br>まず二つのウインドウ（または端末）でこのページを開いてください。</p>
     <div class="room">
       <label for="roomInput" style="font-size:13px;color:var(--muted)">あいことば</label>
       <input id="roomInput" value="room1" autocomplete="off" />
@@ -253,16 +259,23 @@ function onMessage(obj) {
   }
 
   if (obj.type === "msg") {
-    // 既に受信済み／返信済み（残骸化済み）／自分の発言、は無視
     if (pending && pending.id === obj.id) return;
     if (history.some(e => e.id === obj.id)) return;
 
-    // まだ誰も話していない状態で相手が先に話した → 自分は「あとに話す人」
     if (turn === "open" && role === null) role = "responder";
 
     pending = { kind: obj.kind, content: obj.content, time: obj.time, id: obj.id };
-    turn = "me";               // 相手が話した → 自分の番
-    save();                    // pending自体は保存しない（turn/roleのみ）
+    turn = "me";
+    save();
+    render();
+  }
+
+  if (obj.type === "reaction") {
+    // 相手が自分のメッセージにリアクションした → 自分の履歴にスタンプをくっつける
+    const target = history.find(e => e.id === obj.targetId && e.side === "me");
+    if (target) target.stamp = obj.stamp;
+    turn = "me";
+    save();
     render();
   }
 }
@@ -270,10 +283,9 @@ function onMessage(obj) {
 /* =========================================================
    送信
    ========================================================= */
-function sendMessage(kind, content) {
-  if (!canSend()) return;      // 自分の番でも「最初の一投稿」でもないなら送れない
+function sendMessage(content) {
+  if (!canSend()) return;
 
-  // まだ誰も話していない状態で最初に投稿した → 自分が「先に話す人」
   if (turn === "open" && role === null) role = "starter";
 
   // 返信した瞬間、いま見えている相手の言葉を「内容を捨てて」残骸にする
@@ -285,8 +297,25 @@ function sendMessage(kind, content) {
 
   const id = Date.now() + "-" + Math.random().toString(36).slice(2,6);
   const t = now();
-  history.push({ side: "me", kind, content, time: t, id });
-  transport.send({ type: "msg", from: myId, kind, content, time: t, id });
+  history.push({ side: "me", kind: "text", content, time: t, id });
+  transport.send({ type: "msg", from: myId, kind: "text", content, time: t, id });
+
+  turn = "them";
+  save();
+  render();
+  fadeId = null;
+}
+
+function sendReaction(stamp) {
+  if (!pending) return;        // リアクションは相手のメッセージがあるときだけ
+
+  if (turn === "open" && role === null) role = "starter";
+
+  // 相手のメッセージを残骸化し、リアクションをくっつける
+  fadeId = "fade-" + pending.id;
+  history.push({ side: "them", ghost: true, time: pending.time, id: pending.id, stamp });
+  transport.send({ type: "reaction", from: myId, stamp, targetId: pending.id });
+  pending = null;
 
   turn = "them";
   save();
@@ -301,15 +330,7 @@ const $thread = () => $("thread");
 
 function render() {
   // header
-  const roleName = role === "starter" ? "先に話す人"
-                 : role === "responder" ? "あとに話す人"
-                 : "まだ決まっていません";
-  let turnText;
-  if (turn === "open") turnText = "どちらからでも、どうぞ";
-  else if (turn === "me") turnText = "あなたの番です";
-  else turnText = "相手の返信を待っています…";
-  $("turnLabel").innerHTML =
-    `あなた（${roleName}）<small>あいことば: ${room} ／ ${turnText}</small>`;
+  $("turnLabel").innerHTML = `<small>あいことば: ${room}</small>`;
 
   // composer 有効/無効
   const comp = $("composer");
@@ -324,7 +345,7 @@ function render() {
     const e = document.createElement("div");
     e.className = "empty";
     e.textContent = canSend()
-      ? "最初のひとことを送ってみてください。\n（先に話した人が「先に話す人」になります）"
+      ? "最初のひとことを送ってみてください。"
       : "相手が話しはじめるのを待っています…";
     th.appendChild(e);
     return;
@@ -336,12 +357,17 @@ function render() {
   if (pending) {
     th.appendChild(renderBubble({ side:"them", kind: pending.kind, content: pending.content, time: pending.time }));
   }
-  if (turn === "them" && !pending) {
-    const w = document.createElement("div");
-    w.className = "waiting";
-    w.textContent = "相手の返信を待っています…";
-    th.appendChild(w);
+
+  // ターンの案内をスレッド末尾に表示
+  const hint = document.createElement("div");
+  hint.className = "waiting";
+  if (turn === "me" || turn === "open") {
+    hint.textContent = "なにか返事してみましょう";
+  } else {
+    hint.textContent = "相手の返信を待っています…";
   }
+  th.appendChild(hint);
+
   th.scrollTop = th.scrollHeight;
 }
 
@@ -356,12 +382,17 @@ function renderBubble(m) {
   if (m.ghost) {
     cls += " ghost";
     if (fadeId && ("fade-" + m.id) === fadeId) cls += " ghost-fade";
-  } else if (m.kind === "stamp") {
-    cls += " stamp";
   }
   b.className = cls;
   b.textContent = m.ghost ? "" : m.content;
   wrap.appendChild(b);
+
+  if (m.stamp) {
+    const r = document.createElement("div");
+    r.className = "reaction";
+    r.textContent = m.stamp;
+    wrap.appendChild(r);
+  }
 
   const t = document.createElement("div");
   t.className = "time";
@@ -388,7 +419,7 @@ document.addEventListener("input", (e) => {
 function submitText() {
   const v = $input().value.trim();
   if (!v || !canSend()) return;
-  sendMessage("text", v);
+  sendMessage(v);
   $input().value = ""; $input().style.height = "auto"; $send().disabled = true;
 }
 $("sendBtn").addEventListener("click", submitText);
@@ -402,7 +433,7 @@ $("input").addEventListener("keydown", (e) => {
 STAMPS.forEach(s => {
   const btn = document.createElement("button");
   btn.textContent = s;
-  btn.addEventListener("click", () => sendMessage("stamp", s));
+  btn.addEventListener("click", () => sendReaction(s));
   $("stamps").appendChild(btn);
 });
 

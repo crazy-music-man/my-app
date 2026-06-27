@@ -403,7 +403,7 @@ function renderBubble(m) {
     if (fadeIds.has("fade-" + m.id)) cls += " ghost-fade";
   }
   b.className = cls;
-  b.textContent = m.ghost ? "　".repeat(m.len || 3) : (m.content || "");
+  b.textContent = m.ghost ? Array(m.len || 3).fill("　").join("​") : (m.content || "");
   wrap.appendChild(b);
 
   if (m.stamp) {

@@ -57,6 +57,22 @@ async def handler(ws: websockets.ServerConnection):
                 print(f"  [{room_name}] {len(rooms[room_name])}人目が参加")
                 continue
 
+            if msg.get("type") == "end" and room_name and room_name in rooms:
+                peers = [c for c in rooms[room_name] if c is not ws]
+                for peer in peers:
+                    try:
+                        await peer.send(json.dumps({"type": "end"}))
+                    except websockets.ConnectionClosed:
+                        pass
+                rooms[room_name].discard(ws)
+                for peer in peers:
+                    rooms[room_name].discard(peer)
+                if not rooms[room_name]:
+                    del rooms[room_name]
+                print(f"  [{room_name}] ルーム終了")
+                room_name = None
+                continue
+
             if room_name and room_name in rooms:
                 data = json.dumps(msg) if not isinstance(raw, str) else raw
                 peers = [c for c in rooms[room_name] if c is not ws]
@@ -70,8 +86,10 @@ async def handler(ws: websockets.ServerConnection):
     finally:
         if room_name and room_name in rooms:
             rooms[room_name].discard(ws)
+            remaining = len(rooms[room_name])
             if not rooms[room_name]:
                 del rooms[room_name]
+            print(f"  [{room_name}] 一時退出（残り{remaining}人）")
 
 
 def get_local_ip():
